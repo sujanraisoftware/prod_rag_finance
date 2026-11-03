@@ -90,6 +90,25 @@ def test_async_upload_and_task_polling(sample_financial_pdf: Path):
     assert search_data["results"][0]["is_table"] is True
     assert search_data["execution_time_ms"] > 0
 
+    # Test Grounded Financial Q&A with FlashRank Reranking & Low Context
+    answer_resp = client.post(
+        "/api/v1/documents/query/answer",
+        json={
+            "query": "What were the total net sales in FY 2025 and 2024?",
+            "doc_id": doc_id,
+            "top_k": 3,
+            "initial_fetch_k": 10
+        }
+    )
+    assert answer_resp.status_code == 200
+    answer_data = answer_resp.json()
+    assert answer_data["query"] == "What were the total net sales in FY 2025 and 2024?"
+    assert len(answer_data["sources"]) >= 1
+    assert answer_data["sources"][0]["rerank_score"] >= 0
+    assert answer_data["context_tokens_estimated"] > 0
+    assert "latency_ms" in answer_data
+    assert answer_data["latency_ms"]["rerank_ms"] >= 0
+
     # Test document deletion (removes from store and Milvus)
     del_resp = client.delete(f"/api/v1/documents/{doc_id}")
     assert del_resp.status_code == 200

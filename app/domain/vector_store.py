@@ -1,21 +1,32 @@
 import threading
 from pathlib import Path
 from typing import Any
+
 from pymilvus import MilvusClient, DataType
+from pymilvus.exceptions import MilvusException
 
 from app.config import settings
 from app.core.logging import logger
 from app.domain.models import FinancialChunk
 
+# Milvus error code returned when a collection exists but is not loaded in memory
+_ERR_COLLECTION_NOT_LOADED = 101
+
+
+def _escape_filter_value(value: str) -> str:
+    """Escapes a string so it can be safely embedded in a Milvus filter expression."""
+    return str(value).replace("\\", "\\\\").replace('"', '\\"')
+
 
 class MilvusVectorStore:
     """
-    Enterprise-grade vector storage repository for financial chunks powered by Milvus.
-    Supports both local embedded Milvus Lite (.db file) and distributed remote Milvus clusters.
+    Vector storage repository for financial chunks powered by Milvus.
+    Supports both local embedded Milvus Lite (.db file) and remote Milvus clusters.
     Enables:
     - Cosine-similarity dense vector retrieval
-    - Complex scalar filtering (doc_id, page ranges, is_table, section hierarchies)
+    - Scalar filtering (doc_id, page number, is_table)
     - Dynamic metadata fields
+    - Automatic (re)loading of the collection if it is released
     """
 
     def __init__(
@@ -23,7 +34,7 @@ class MilvusVectorStore:
         uri: str = settings.MILVUS_URI,
         token: str = settings.MILVUS_TOKEN,
         collection_name: str = settings.MILVUS_COLLECTION_NAME,
-        dimension: int = settings.EMBEDDING_DIMENSION
+        dimension: int = settings.EMBEDDING_DIMENSION,
     ):
         self.uri = uri
         self.token = token
@@ -39,6 +50,9 @@ class MilvusVectorStore:
 
         self._init_collection()
 
+    # ------------------------------------------------------------------
+    # Connection / collection lifecycle
+    # ------------------------------------------------------------------
     def _get_client(self) -> MilvusClient:
         if self._client is None:
             kwargs: dict[str, Any] = {"uri": self.uri}
@@ -47,12 +61,30 @@ class MilvusVectorStore:
             self._client = MilvusClient(**kwargs)
         return self._client
 
-    def _init_collection(self) -> None:
-        """Initializes collection schema and vector index if not already present."""
+    def _is_loaded(self, client: MilvusClient) -> bool:
+        try:
+            state = client.get_load_state(self.collection_name)
+            return "Loaded" in str(state.get("state", ""))
+        except Exception as e:
+            logger.warning(f"Could not read Milvus load state: {str(e)}")
+            return False
+
+    def _ensure_loaded(self) -> None:
+        """Loads the collection into memory if it is not already loaded (idempotent)."""
         with self._lock:
             client = self._get_client()
+            if not self._is_loaded(client):
+                logger.info(f"Loading Milvus collection '{self.collection_name}' into memory")
+                client.load_collection(self.collection_name)
+
+    def _init_collection(self) -> None:
+        """Initializes collection schema and vector index if not present, then loads it."""
+        with self._lock:
+            client = self._get_client()
+
             if client.has_collection(self.collection_name):
                 logger.info(f"Connected to existing Milvus collection: '{self.collection_name}'")
+                self._ensure_loaded()
                 return
 
             logger.info(f"Creating new Milvus collection: '{self.collection_name}' (dim={self.dimension})")
@@ -61,7 +93,7 @@ class MilvusVectorStore:
             schema = client.create_schema(
                 auto_id=False,
                 enable_dynamic_field=True,
-                description="Financial RAG chunks collection with strict provenance metadata"
+                description="Financial RAG chunks collection with strict provenance metadata",
             )
 
             # Primary Key
@@ -88,25 +120,45 @@ class MilvusVectorStore:
             index_params.add_index(
                 field_name="vector",
                 index_type="AUTOINDEX",
-                metric_type="COSINE"
+                metric_type="COSINE",
             )
 
-            # 3. Create Collection
+            # 3. Create Collection (with index_params it should auto-load, but we verify)
             client.create_collection(
                 collection_name=self.collection_name,
                 schema=schema,
-                index_params=index_params
+                index_params=index_params,
             )
+            self._ensure_loaded()
             logger.info(f"Successfully initialized Milvus collection '{self.collection_name}'")
 
+    def _call_with_reload(self, fn_name: str, **kwargs: Any) -> Any:
+        """
+        Calls a MilvusClient method (search/query/delete). If the collection has been
+        released (error code 101), reloads it once and retries.
+        """
+        client = self._get_client()
+        fn = getattr(client, fn_name)
+        try:
+            return fn(**kwargs)
+        except MilvusException as e:
+            if getattr(e, "code", None) == _ERR_COLLECTION_NOT_LOADED:
+                logger.warning(
+                    f"Collection '{self.collection_name}' was released; reloading and retrying {fn_name}"
+                )
+                client.load_collection(self.collection_name)
+                return fn(**kwargs)
+            raise
+
+    # ------------------------------------------------------------------
+    # Write path
+    # ------------------------------------------------------------------
     def insert_chunks(
         self,
         chunks: list[FinancialChunk],
-        embeddings: list[list[float]]
+        embeddings: list[list[float]],
     ) -> int:
-        """
-        Inserts financial chunks along with their vector embeddings into Milvus.
-        """
+        """Inserts financial chunks along with their vector embeddings into Milvus."""
         if not chunks or not embeddings:
             return 0
 
@@ -142,12 +194,15 @@ class MilvusVectorStore:
             client = self._get_client()
             res = client.insert(
                 collection_name=self.collection_name,
-                data=records
+                data=records,
             )
             inserted_count = res.get("insert_count", len(records)) if isinstance(res, dict) else len(records)
             logger.info(f"Indexed {inserted_count} financial chunks into Milvus collection '{self.collection_name}'")
             return inserted_count
 
+    # ------------------------------------------------------------------
+    # Read path
+    # ------------------------------------------------------------------
     def search(
         self,
         query_vector: list[float],
@@ -155,20 +210,18 @@ class MilvusVectorStore:
         doc_id: str | None = None,
         is_table_only: bool = False,
         page_number: int | None = None,
-        min_score: float = 0.0
+        min_score: float = 0.0,
     ) -> list[dict[str, Any]]:
-        """
-        Executes hybrid dense vector search with scalar metadata filtering.
-        """
-        filter_exprs = []
+        """Dense vector search with scalar metadata filtering."""
+        filter_exprs: list[str] = []
         if doc_id:
-            filter_exprs.append(f'doc_id == "{doc_id}"')
+            filter_exprs.append(f'doc_id == "{_escape_filter_value(doc_id)}"')
         if is_table_only:
-            filter_exprs.append('is_table == true')
+            filter_exprs.append("is_table == true")
         if page_number is not None:
-            filter_exprs.append(f'page_number == {page_number}')
+            filter_exprs.append(f"page_number == {int(page_number)}")
 
-        filter_str = " and ".join(filter_exprs) if filter_exprs else None
+        filter_str = " and ".join(filter_exprs) if filter_exprs else ""
 
         output_fields = [
             "id",
@@ -182,29 +235,33 @@ class MilvusVectorStore:
             "section_breadcrumb",
             "content",
             "raw_content",
-            "token_estimate"
+            "token_estimate",
         ]
 
         with self._lock:
-            client = self._get_client()
-            raw_results = client.search(
+            self._ensure_loaded()
+            raw_results = self._call_with_reload(
+                "search",
                 collection_name=self.collection_name,
                 data=[query_vector],
                 limit=limit,
                 filter=filter_str,
-                output_fields=output_fields
+                output_fields=output_fields,
             )
 
         formatted_results: list[dict[str, Any]] = []
         if raw_results and len(raw_results) > 0:
             for hit in raw_results[0]:
+                # For COSINE metric, Milvus returns the similarity in "distance"
                 score = float(hit.get("distance", 0.0))
                 if score < min_score:
                     continue
 
                 entity = hit.get("entity", {})
                 breadcrumb = entity.get("section_breadcrumb", "")
-                breadcrumb_list = [b.strip() for b in breadcrumb.split(">") if b.strip()] if breadcrumb else []
+                breadcrumb_list = (
+                    [b.strip() for b in breadcrumb.split(">") if b.strip()] if breadcrumb else []
+                )
 
                 formatted_results.append({
                     "chunk_id": hit.get("id"),
@@ -219,7 +276,7 @@ class MilvusVectorStore:
                     "section_breadcrumb": breadcrumb_list,
                     "content": entity.get("content"),
                     "raw_content": entity.get("raw_content"),
-                    "token_estimate": entity.get("token_estimate")
+                    "token_estimate": entity.get("token_estimate"),
                 })
 
         return formatted_results
@@ -227,18 +284,28 @@ class MilvusVectorStore:
     def delete_by_doc_id(self, doc_id: str) -> int:
         """Deletes all chunks associated with a specific document from Milvus."""
         with self._lock:
-            client = self._get_client()
             try:
-                res = client.delete(
+                self._ensure_loaded()
+                res = self._call_with_reload(
+                    "delete",
                     collection_name=self.collection_name,
-                    filter=f'doc_id == "{doc_id}"'
+                    filter=f'doc_id == "{_escape_filter_value(doc_id)}"',
                 )
-                logger.info(f"Deleted vectors for document '{doc_id}' from Milvus")
-                return len(res) if isinstance(res, list) else 1
+                if isinstance(res, dict):
+                    deleted = int(res.get("delete_count", 0))
+                elif isinstance(res, list):
+                    deleted = len(res)
+                else:
+                    deleted = 0
+                logger.info(f"Deleted {deleted} vectors for document '{doc_id}' from Milvus")
+                return deleted
             except Exception as e:
                 logger.error(f"Error deleting vectors for doc '{doc_id}' in Milvus: {str(e)}")
                 return 0
 
+    # ------------------------------------------------------------------
+    # Introspection
+    # ------------------------------------------------------------------
     def get_count(self) -> int:
         """Returns total number of indexed chunk vectors in the collection."""
         with self._lock:
@@ -251,11 +318,14 @@ class MilvusVectorStore:
                 return 0
 
     def is_healthy(self) -> bool:
-        """Checks connectivity to Milvus."""
+        """Checks connectivity to Milvus and that the collection is loaded (reloads if needed)."""
         try:
             with self._lock:
                 client = self._get_client()
-                return client.has_collection(self.collection_name)
+                if not client.has_collection(self.collection_name):
+                    return False
+                self._ensure_loaded()
+                return self._is_loaded(client)
         except Exception:
             return False
 
@@ -270,4 +340,3 @@ class MilvusVectorStore:
 
 
 milvus_store = MilvusVectorStore()
-

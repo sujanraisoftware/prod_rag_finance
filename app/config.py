@@ -58,5 +58,17 @@ class Settings(BaseSettings):
     EMBEDDING_DIMENSION: int = 384
     EMBEDDING_BATCH_SIZE: int = 32
 
+    # Reranker Configuration (Ultra-fast CPU ONNX Cross-Encoder)
+    RERANKER_MODEL_NAME: str = "ms-marco-TinyBERT-L-2-v2"
+    RERANKER_INITIAL_TOP_K: int = 15
+    RERANKER_FINAL_TOP_K: int = 4
+    MAX_CONTEXT_TOKENS: int = 2000
+
+    # Groq LLM Configuration
+    GROQ_API_KEY: str = ""
+    GROQ_MODEL: str = "llama-3.3-70b-versatile"
+    GROQ_TEMPERATURE: float = 0.0
+    GROQ_MAX_TOKENS: int = 1024
+
 
 settings = Settings()
