@@ -16,6 +16,7 @@ from app.core.exceptions import (
     TaskNotFoundException,
 )
 from app.core.logging import logger
+from app.domain.vector_store import milvus_store
 from app.domain.worker import UnifiedTaskManager
 
 
@@ -26,11 +27,12 @@ async def lifespan(app: FastAPI):
     settings.STORAGE_DIR.mkdir(parents=True, exist_ok=True)
     logger.info(
         f"Starting {settings.APP_NAME} v{settings.APP_VERSION} "
-        f"[Worker Backend: {settings.WORKER_BACKEND}, Celery Broker: {settings.CELERY_BROKER_URL}]"
+        f"[Worker Backend: {settings.WORKER_BACKEND}, Milvus URI: {settings.MILVUS_URI}]"
     )
     yield
     # Shutdown actions
     logger.info(f"Shutting down {settings.APP_NAME}")
+    milvus_store.close()
 
 
 app = FastAPI(
@@ -95,6 +97,8 @@ app.include_router(api_router)
 @app.get("/health", response_model=HealthResponse, tags=["Health"])
 async def health_check():
     celery_ok = UnifiedTaskManager.is_celery_available()
+    milvus_ok = milvus_store.is_healthy()
+    milvus_count = milvus_store.get_count() if milvus_ok else 0
     upload_writable = settings.UPLOAD_DIR.exists() and os.access(settings.UPLOAD_DIR, os.W_OK)
 
     return HealthResponse(
@@ -103,6 +107,8 @@ async def health_check():
         version=settings.APP_VERSION,
         worker_backend=settings.WORKER_BACKEND,
         celery_connected=celery_ok,
+        milvus_connected=milvus_ok,
+        milvus_total_vectors=milvus_count,
         upload_dir_writable=upload_writable
     )
 

@@ -21,10 +21,10 @@ High-throughput, C-accelerated document ingestion pipeline specifically engineer
 ```
 prod_rag_finance/
 ├── app/
-│   ├── config.py                 # Pydantic Settings (ENV, margins, worker mode, limits)
+│   ├── config.py                 # Pydantic Settings (ENV, margins, worker mode, Milvus URI)
 │   ├── main.py                   # FastAPI app, lifespan, CORS, error handlers
 │   ├── api/
-│   │   ├── routes.py             # Upload, Task Polling, Chunks, Instant Parse
+│   │   ├── routes.py             # Upload, Task Polling, Chunks, Vector Search, Instant Parse
 │   │   └── schemas.py            # Pydantic request/response schemas
 │   ├── core/
 │   │   ├── exceptions.py         # Custom FinTech domain exceptions (422, 413, 404, 500)
@@ -32,6 +32,8 @@ prod_rag_finance/
 │   │   └── security.py           # Magic byte (%PDF-), encryption check, SHA-256 audit
 │   └── domain/
 │       ├── models.py             # Domain models (FinancialChunk, DocumentMetadata, TaskProgress)
+│       ├── embeddings.py         # CPU-optimized ONNX dense vector embeddings (FastEmbed)
+│       ├── vector_store.py       # Enterprise Milvus Vector Database client & schema
 │       ├── storage.py            # Thread-safe document & chunk storage (in-memory + disk cache)
 │       ├── worker.py             # Dual worker: Distributed Celery + In-process Async Pool
 │       └── rag/
@@ -39,11 +41,12 @@ prod_rag_finance/
 │           ├── chunker.py        # Financial Semantic Chunker with Table Preservation
 │           └── table_cleaner.py  # Markdown table normalizer & repeated-header slicing
 └── tests/
-    ├── test_api.py               # API upload, task polling, chunks retrieval
+    ├── test_api.py               # API upload, task polling, Milvus vector search
+    ├── test_vector_store.py      # Milvus insertion, scalar filtering, deletion
     ├── test_chunker.py           # Table preservation, SEC section breadcrumbs
     ├── test_extractor.py         # Margin clipping, speed, and accuracy
     ├── test_security.py          # PDF validation, encryption, non-PDF rejection
-    └── benchmark.py              # Performance & memory profiler
+    └── benchmark.py              # Performance, embedding & Milvus query profiler
 ```
 
 ---
@@ -138,5 +141,46 @@ curl "http://localhost:8000/api/v1/documents/{doc_id}/chunks?chunk_type=table"
 ```bash
 curl -X POST "http://localhost:8000/api/v1/documents/parse-instant" \
   -F "file=@earnings_report.pdf;type=application/pdf"
+```
+
+### 5. Semantic Vector Search with Milvus & Scalar Filtering
+```bash
+curl -X POST "http://localhost:8000/api/v1/search" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "Consolidated statements of operations net income and revenues",
+    "limit": 5,
+    "doc_id": "8a719d45-7798-4c17-9c97-6a166aef19f9",
+    "is_table_only": true,
+    "min_score": 0.5
+  }'
+```
+
+**Response (`200 OK`):**
+```json
+{
+  "query": "Consolidated statements of operations net income and revenues",
+  "total_results": 1,
+  "execution_time_ms": 11.45,
+  "results": [
+    {
+      "chunk_id": "8a719d45_p54_c2",
+      "similarity_score": 0.8412,
+      "doc_id": "8a719d45-7798-4c17-9c97-6a166aef19f9",
+      "filename": "sample_10k.pdf",
+      "page_number": 54,
+      "total_pages": 120,
+      "chunk_type": "table",
+      "is_table": true,
+      "section_header": "Consolidated Statements of Operations",
+      "section_breadcrumb": [
+        "ITEM 8. FINANCIAL STATEMENTS",
+        "Consolidated Statements of Operations"
+      ],
+      "content": "<!-- Financial Context | Document: sample_10k.pdf | Page: 54 | Section: ITEM 8. FINANCIAL STATEMENTS > Consolidated Statements of Operations -->\n\n| Financial Line Item | FY 2025 | FY 2024 |\n|---|---|---|\n| Net Product Sales | $284,500 | $260,200 |\n| Net Service Revenues | $105,400 | $85,200 |\n| Total Net Sales | $389,900 | $345,400 |",
+      "token_estimate": 85
+    }
+  ]
+}
 ```
 
