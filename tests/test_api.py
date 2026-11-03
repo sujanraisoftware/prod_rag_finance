@@ -73,3 +73,25 @@ def test_async_upload_and_task_polling(sample_financial_pdf: Path):
     assert chunks_data["total_chunks"] >= 1
     assert all(c["chunk_type"] == "table" for c in chunks_data["chunks"])
 
+    # Test Milvus Vector Search endpoint
+    search_resp = client.post(
+        "/api/v1/search",
+        json={
+            "query": "Net product sales and service revenues",
+            "limit": 5,
+            "doc_id": doc_id,
+            "is_table_only": True
+        }
+    )
+    assert search_resp.status_code == 200
+    search_data = search_resp.json()
+    assert search_data["total_results"] >= 1
+    assert search_data["results"][0]["doc_id"] == doc_id
+    assert search_data["results"][0]["is_table"] is True
+    assert search_data["execution_time_ms"] > 0
+
+    # Test document deletion (removes from store and Milvus)
+    del_resp = client.delete(f"/api/v1/documents/{doc_id}")
+    assert del_resp.status_code == 200
+    assert "deleted successfully" in del_resp.json()["message"]
+

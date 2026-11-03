@@ -10,6 +10,7 @@ import redis
 
 from app.config import settings
 from app.core.logging import logger
+from app.domain.embeddings import embedding_service
 from app.domain.models import (
     DocumentMetadata,
     TaskProgress,
@@ -19,6 +20,7 @@ from app.domain.models import (
 from app.domain.rag.chunker import FinancialChunker
 from app.domain.rag.extractor import FastFinanceExtractor
 from app.domain.storage import document_store
+from app.domain.vector_store import milvus_store
 
 
 # Celery App setup for distributed production workers
@@ -82,7 +84,7 @@ def process_financial_document_sync(
             task_id=task_id,
             status=TaskStatusEnum.PROCESSING,
             step="Executing financial table preservation and semantic chunking",
-            percent=65.0
+            percent=50.0
         )
 
         chunker = FinancialChunker(
@@ -97,13 +99,26 @@ def process_financial_document_sync(
         table_chunks = sum(1 for c in chunks if c.chunk_type == ChunkType.TABLE)
         text_chunks = total_chunks - table_chunks
 
-        # Step 3: Persistence and audit records
+        # Step 3: Generate Dense Vector Embeddings
         document_store.update_task_progress(
             task_id=task_id,
             status=TaskStatusEnum.PROCESSING,
-            step="Persisting chunks and audit metadata",
-            percent=90.0
+            step="Generating dense vector embeddings with ONNX",
+            percent=70.0
         )
+
+        chunk_texts = [c.content for c in chunks]
+        embeddings = embedding_service.embed_documents(chunk_texts)
+
+        # Step 4: Index into Milvus Vector Database & Local Audit Storage
+        document_store.update_task_progress(
+            task_id=task_id,
+            status=TaskStatusEnum.PROCESSING,
+            step="Indexing financial vectors into Milvus collection",
+            percent=88.0
+        )
+
+        indexed_vectors = milvus_store.insert_chunks(chunks=chunks, embeddings=embeddings)
 
         duration = time.perf_counter() - start_time
         doc_metadata = DocumentMetadata(
@@ -129,6 +144,8 @@ def process_financial_document_sync(
             "total_chunks": total_chunks,
             "table_chunks": table_chunks,
             "text_chunks": text_chunks,
+            "vectors_indexed": indexed_vectors,
+            "milvus_collection": milvus_store.collection_name,
             "duration_seconds": round(duration, 4),
             "pages_per_sec": round(page_count / max(duration, 0.0001), 2)
         }

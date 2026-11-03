@@ -47,5 +47,16 @@ class Settings(BaseSettings):
     PRESERVE_TABLES_ATOMICALLY: bool = True
     INJECT_GROUNDING_HEADER: bool = True
 
+    # Milvus Vector Database Configuration
+    # Supports Milvus Lite (local file: ./storage/milvus_finance.db) or remote Milvus cluster (http://localhost:19530)
+    MILVUS_URI: str = "./storage/milvus_finance.db"
+    MILVUS_TOKEN: str = ""
+    MILVUS_COLLECTION_NAME: str = "financial_rag_chunks"
+
+    # Embedding Service Configuration (CPU-optimized ONNX runtime)
+    EMBEDDING_MODEL_NAME: str = "BAAI/bge-small-en-v1.5"
+    EMBEDDING_DIMENSION: int = 384
+    EMBEDDING_BATCH_SIZE: int = 32
+
 
 settings = Settings()

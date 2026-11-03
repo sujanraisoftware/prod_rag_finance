@@ -4,10 +4,12 @@ import psutil
 import pymupdf
 from app.domain.rag.extractor import FastFinanceExtractor
 from app.domain.rag.chunker import FinancialChunker
+from app.domain.embeddings import embedding_service
+from app.domain.vector_store import MilvusVectorStore
 
 
 def run_benchmark():
-    # Generate 20-page financial PDF
+    # 1. Generate 20-page financial PDF
     pdf_path = "/tmp/bench_20p.pdf"
     doc = pymupdf.open()
     for i in range(20):
@@ -42,32 +44,66 @@ def run_benchmark():
     proc = psutil.Process(os.getpid())
     mem_before = proc.memory_info().rss / 1024 / 1024
 
+    # 2. Benchmark PyMuPDF4LLM Extraction
     t0 = time.perf_counter()
     extractor = FastFinanceExtractor(enable_layout=False, top_margin=30.0, bottom_margin=30.0)
     pages, stats = extractor.extract_document(pdf_path)
     extract_time = time.perf_counter() - t0
 
+    # 3. Benchmark Financial Chunking & Table Preservation
     chunker = FinancialChunker(max_tokens=600, preserve_tables=True)
     t1 = time.perf_counter()
     chunks = chunker.chunk_pages("bench_doc", "bench_20p.pdf", pages)
     chunk_time = time.perf_counter() - t1
 
-    total_time = extract_time + chunk_time
+    # 4. Benchmark ONNX Vector Embeddings Generation
+    t2 = time.perf_counter()
+    chunk_texts = [c.content for c in chunks]
+    embeddings = embedding_service.embed_documents(chunk_texts)
+    embedding_time = time.perf_counter() - t2
+
+    # 5. Benchmark Milvus Vector Database Indexing
+    bench_milvus = MilvusVectorStore(
+        uri="/tmp/bench_milvus.db",
+        collection_name="bench_financial_chunks",
+        dimension=384
+    )
+    t3 = time.perf_counter()
+    indexed_count = bench_milvus.insert_chunks(chunks, embeddings)
+    indexing_time = time.perf_counter() - t3
+
+    # 6. Benchmark Milvus Filtered Vector Search
+    t4 = time.perf_counter()
+    query_vec = embedding_service.embed_query("Total obligations scheduled debt table")
+    search_results = bench_milvus.search(
+        query_vector=query_vec,
+        limit=5,
+        is_table_only=True
+    )
+    search_time = time.perf_counter() - t4
+
+    total_pipeline_time = extract_time + chunk_time + embedding_time + indexing_time
     mem_after = proc.memory_info().rss / 1024 / 1024
     mem_delta = mem_after - mem_before
 
-    print(f"\n=======================================================")
-    print(f"📊 PYMUPDF4LLM FINANCIAL INGESTION BENCHMARK")
-    print(f"=======================================================")
-    print(f"Pages Processed      : {len(pages)}")
-    print(f"Total Chunks Emitted : {len(chunks)} ({sum(1 for c in chunks if c.is_table)} tabular chunks)")
-    print(f"Extraction Latency   : {extract_time*1000:.2f} ms ({len(pages)/extract_time:.1f} pages/sec)")
-    print(f"Chunking Latency     : {chunk_time*1000:.2f} ms")
-    print(f"Total Pipeline Speed : {len(pages)/total_time:.1f} pages/sec ({total_time*1000/len(pages):.2f} ms/page)")
-    print(f"Memory Footprint     : {mem_after:.1f} MB (Delta: {mem_delta:.1f} MB)")
-    print(f"=======================================================\n")
+    print(f"\n==================================================================")
+    print(f"📊 FULL END-TO-END FINTECH RAG PIPELINE BENCHMARK (PyMuPDF + Milvus)")
+    print(f"==================================================================")
+    print(f"Pages Ingested       : {len(pages)} pages")
+    print(f"Total Chunks Created : {len(chunks)} ({sum(1 for c in chunks if c.is_table)} tabular chunks)")
+    print(f"------------------------------------------------------------------")
+    print(f"1. PyMuPDF4LLM Parse : {extract_time*1000:.2f} ms ({len(pages)/extract_time:.1f} pages/sec)")
+    print(f"2. Financial Chunking: {chunk_time*1000:.2f} ms")
+    print(f"3. FastEmbed (ONNX)  : {embedding_time*1000:.2f} ms ({len(chunks)/embedding_time:.1f} chunks/sec)")
+    print(f"4. Milvus Indexing   : {indexing_time*1000:.2f} ms ({indexed_count} vectors indexed)")
+    print(f"5. Milvus Query Time : {search_time*1000:.2f} ms (Top hit similarity: {search_results[0]['similarity_score']:.4f})")
+    print(f"------------------------------------------------------------------")
+    print(f"Total Pipeline Time  : {total_pipeline_time:.3f} s ({len(pages)/total_pipeline_time:.1f} pages/sec end-to-end)")
+    print(f"Peak RAM Usage       : {mem_after:.1f} MB (Delta: {mem_delta:.1f} MB)")
+    print(f"==================================================================\n")
+
+    bench_milvus.close()
 
 
 if __name__ == "__main__":
     run_benchmark()
-

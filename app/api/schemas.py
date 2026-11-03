@@ -51,10 +51,44 @@ class InstantParseResponse(BaseModel):
     chunks: list[FinancialChunk]
 
 
+class VectorSearchRequest(BaseModel):
+    query: str = Field(..., description="Financial question or search query (e.g. 'Operating cash flow FY 2025')")
+    limit: int = Field(default=5, ge=1, le=50, description="Number of chunks to retrieve")
+    doc_id: str | None = Field(default=None, description="Optional document ID filter for document-specific queries")
+    is_table_only: bool = Field(default=False, description="Filter only tabular balance sheets/income statements")
+    page_number: int | None = Field(default=None, description="Filter to a specific page number")
+    min_score: float = Field(default=0.0, ge=0.0, le=1.0, description="Minimum cosine similarity threshold")
+
+
+class SearchResultItem(BaseModel):
+    chunk_id: str
+    similarity_score: float
+    doc_id: str
+    filename: str
+    page_number: int
+    total_pages: int
+    chunk_type: str
+    is_table: bool
+    section_header: str | None = None
+    section_breadcrumb: list[str] = Field(default_factory=list)
+    content: str
+    raw_content: str
+    token_estimate: int
+
+
+class VectorSearchResponse(BaseModel):
+    query: str
+    total_results: int
+    execution_time_ms: float
+    results: list[SearchResultItem]
+
+
 class HealthResponse(BaseModel):
     status: str
     app_name: str
     version: str
     worker_backend: str
     celery_connected: bool
+    milvus_connected: bool
+    milvus_total_vectors: int
     upload_dir_writable: bool

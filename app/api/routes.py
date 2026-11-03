@@ -1,7 +1,8 @@
 import os
-import shutil
-import uuid
 from pathlib import Path
+import shutil
+import time
+import uuid
 from typing import Annotated
 from fastapi import APIRouter, File, UploadFile, Query, status
 from fastapi.responses import JSONResponse
@@ -12,16 +13,21 @@ from app.api.schemas import (
     DocumentListResponse,
     ChunksResponse,
     InstantParseResponse,
+    VectorSearchRequest,
+    VectorSearchResponse,
+    SearchResultItem,
     HealthResponse,
 )
 from app.config import settings
 from app.core.exceptions import InvalidPDFException
 from app.core.logging import logger
 from app.core.security import sanitize_filename, validate_pdf_file
+from app.domain.embeddings import embedding_service
 from app.domain.models import ChunkType, DocumentMetadata
 from app.domain.rag.chunker import FinancialChunker
 from app.domain.rag.extractor import FastFinanceExtractor
 from app.domain.storage import document_store
+from app.domain.vector_store import milvus_store
 from app.domain.worker import task_manager, UnifiedTaskManager
 
 router = APIRouter(prefix="/api/v1", tags=["Financial Ingestion"])
@@ -213,14 +219,54 @@ async def parse_instant(file: Annotated[UploadFile, File(...)]):
             os.remove(temp_file_path)
 
 
+@router.post(
+    "/search",
+    response_model=VectorSearchResponse,
+    summary="Semantic vector search across financial chunks",
+    description="Embeds the user query and searches the Milvus vector database with optional scalar filtering by doc_id, page_number, and table_only flag.",
+)
+async def vector_search(request: VectorSearchRequest):
+    t0 = time.perf_counter()
+
+    # 1. Generate query embedding
+    query_vector = embedding_service.embed_query(request.query)
+
+    # 2. Search Milvus with metadata filters
+    hits = milvus_store.search(
+        query_vector=query_vector,
+        limit=request.limit,
+        doc_id=request.doc_id,
+        is_table_only=request.is_table_only,
+        page_number=request.page_number,
+        min_score=request.min_score
+    )
+
+    duration_ms = (time.perf_counter() - t0) * 1000
+
+    results = [SearchResultItem.model_validate(h) for h in hits]
+    return VectorSearchResponse(
+        query=request.query,
+        total_results=len(results),
+        execution_time_ms=round(duration_ms, 2),
+        results=results
+    )
+
+
 @router.delete(
     "/documents/{doc_id}",
-    summary="Delete an ingested document and its chunks",
+    summary="Delete an ingested document, its audit chunks, and Milvus vectors",
 )
 async def delete_document(doc_id: str):
+    # 1. Delete from local metadata store
     document_store.delete_document(doc_id)
+    # 2. Delete vectors from Milvus collection
+    deleted_vectors = milvus_store.delete_by_doc_id(doc_id)
+
     return JSONResponse(
         status_code=status.HTTP_200_OK,
-        content={"message": f"Document {doc_id} and its associated chunks deleted successfully."}
+        content={
+            "message": f"Document {doc_id} and its associated Milvus vectors deleted successfully.",
+            "vectors_removed": deleted_vectors
+        }
     )
 
