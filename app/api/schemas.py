@@ -83,6 +83,38 @@ class VectorSearchResponse(BaseModel):
     results: list[SearchResultItem]
 
 
+class AnswerRequest(BaseModel):
+    query: str = Field(..., description="Financial question (e.g. 'What was the total revenue in FY 2025?')")
+    doc_id: str | None = Field(default=None, description="Optional document ID to isolate search to a specific filing")
+    top_k: int = Field(default=4, ge=1, le=10, description="Final number of top reranked chunks fed to the LLM")
+    initial_fetch_k: int = Field(default=15, ge=5, le=50, description="Number of candidate chunks retrieved from Milvus before reranking")
+    is_table_only: bool = Field(default=False, description="Filter only tabular balance sheets and financial statements")
+    min_score: float = Field(default=0.0, ge=0.0, le=1.0, description="Minimum vector similarity threshold")
+    model: str | None = Field(default=None, description="Groq model override (e.g. 'llama-3.3-70b-versatile', 'llama-3.1-8b-instant')")
+    temperature: float | None = Field(default=None, ge=0.0, le=1.0, description="LLM sampling temperature (default: 0.0 for deterministic answers)")
+
+
+class SourceCitation(BaseModel):
+    chunk_id: str
+    page_number: int
+    filename: str
+    section_header: str | None = None
+    section_breadcrumb: list[str] = Field(default_factory=list)
+    is_table: bool
+    rerank_score: float
+    content_snippet: str
+
+
+class AnswerResponse(BaseModel):
+    query: str
+    doc_id: str | None = None
+    answer: str
+    model_used: str
+    context_tokens_estimated: int
+    sources: list[SourceCitation]
+    latency_ms: dict[str, float]
+
+
 class HealthResponse(BaseModel):
     status: str
     app_name: str
@@ -92,3 +124,5 @@ class HealthResponse(BaseModel):
     milvus_connected: bool
     milvus_total_vectors: int
     upload_dir_writable: bool
+
+

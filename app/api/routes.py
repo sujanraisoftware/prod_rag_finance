@@ -17,15 +17,20 @@ from app.api.schemas import (
     VectorSearchResponse,
     SearchResultItem,
     HealthResponse,
+    AnswerRequest,
+    AnswerResponse,
+    SourceCitation,
 )
 from app.config import settings
 from app.core.exceptions import InvalidPDFException
+from app.core.llm_service import llm_service
 from app.core.logging import logger
 from app.core.security import sanitize_filename, validate_pdf_file
 from app.domain.embeddings import embedding_service
 from app.domain.models import ChunkType, DocumentMetadata
 from app.domain.rag.chunker import FinancialChunker
 from app.domain.rag.extractor import FastFinanceExtractor
+from app.domain.reranker import reranker_service
 from app.domain.storage import document_store
 from app.domain.vector_store import milvus_store
 from app.domain.worker import task_manager, UnifiedTaskManager
@@ -228,6 +233,26 @@ async def parse_instant(file: Annotated[UploadFile, File(...)]):
 async def vector_search(request: VectorSearchRequest):
     t0 = time.perf_counter()
 
+    target_doc_id = request.doc_id.strip() if request.doc_id and request.doc_id.strip() else None
+
+    # Auto-sync check if querying a document that exists in store but not yet indexed in Milvus
+    if target_doc_id:
+        doc_meta = document_store.get_document(target_doc_id)
+        dummy_vec = [0.0] * settings.EMBEDDING_DIMENSION
+        existing = milvus_store.search(
+            query_vector=dummy_vec,
+            limit=1,
+            doc_id=target_doc_id,
+            min_score=-1.0
+        )
+        if not existing:
+            logger.info(f"Auto-syncing document '{target_doc_id}' ({doc_meta.filename}) into Milvus...")
+            chunks, _ = document_store.get_chunks(target_doc_id, limit=2000)
+            if chunks:
+                chunk_texts = [c.content for c in chunks]
+                embs = embedding_service.embed_documents(chunk_texts)
+                milvus_store.insert_chunks(chunks=chunks, embeddings=embs)
+
     # 1. Generate query embedding
     query_vector = embedding_service.embed_query(request.query)
 
@@ -235,7 +260,7 @@ async def vector_search(request: VectorSearchRequest):
     hits = milvus_store.search(
         query_vector=query_vector,
         limit=request.limit,
-        doc_id=request.doc_id,
+        doc_id=target_doc_id,
         is_table_only=request.is_table_only,
         page_number=request.page_number,
         min_score=request.min_score
@@ -270,3 +295,120 @@ async def delete_document(doc_id: str):
         }
     )
 
+@router.post(
+    "/documents/query/answer",
+    response_model=AnswerResponse,
+    summary="Financial Q&A with Milvus vector search, FlashRank reranking, and Groq reasoning",
+    description="Full RAG pipeline: 1) Milvus dense retrieval -> 2) FlashRank Cross-Encoder reranking -> 3) Context compression -> 4) Grounded financial generation via Groq.",
+)
+async def query_document_answer(req: AnswerRequest):
+    start_total = time.perf_counter()
+
+    target_doc_id = req.doc_id.strip() if req.doc_id and req.doc_id.strip() else None
+
+    # Step 0: Auto-sync / Validation check
+    if target_doc_id:
+        doc_meta = document_store.get_document(target_doc_id)
+        dummy_vec = [0.0] * settings.EMBEDDING_DIMENSION
+        existing = milvus_store.search(
+            query_vector=dummy_vec,
+            limit=1,
+            doc_id=target_doc_id,
+            min_score=-1.0
+        )
+        if not existing:
+            logger.info(f"Auto-syncing document '{target_doc_id}' ({doc_meta.filename}) into Milvus...")
+            chunks, _ = document_store.get_chunks(target_doc_id, limit=2000)
+            if chunks:
+                chunk_texts = [c.content for c in chunks]
+                embs = embedding_service.embed_documents(chunk_texts)
+                milvus_store.insert_chunks(chunks=chunks, embeddings=embs)
+                logger.info(f"Successfully auto-synced {len(chunks)} chunks for '{target_doc_id}' into Milvus.")
+
+    # Step 1: Milvus Vector Search (fetch candidates, e.g. top 15)
+    t0_retrieval = time.perf_counter()
+    query_vector = embedding_service.embed_query(req.query)
+    candidate_hits = milvus_store.search(
+        query_vector=query_vector,
+        limit=req.initial_fetch_k,
+        doc_id=target_doc_id,
+        is_table_only=req.is_table_only,
+        min_score=req.min_score,
+    )
+    retrieval_ms = (time.perf_counter() - t0_retrieval) * 1000
+
+    if not candidate_hits:
+        total_ms = (time.perf_counter() - start_total) * 1000
+        return AnswerResponse(
+            query=req.query,
+            doc_id=target_doc_id,
+            answer="The document does not contain any relevant information regarding your query.",
+            model_used=req.model or settings.GROQ_MODEL,
+            context_tokens_estimated=0,
+            sources=[],
+            latency_ms={
+                "retrieval_ms": round(retrieval_ms, 2),
+                "rerank_ms": 0.0,
+                "llm_ms": 0.0,
+                "total_ms": round(total_ms, 2),
+            }
+        )
+
+    # Step 2: Cross-Encoder Reranking with FlashRank
+    t0_rerank = time.perf_counter()
+    reranked_chunks = reranker_service.rerank(
+        query=req.query,
+        candidates=candidate_hits,
+        top_k=req.top_k
+    )
+    rerank_ms = (time.perf_counter() - t0_rerank) * 1000
+
+    # Step 3: Context Compression (low context window optimization)
+    compact_context, estimated_tokens = reranker_service.build_compressed_context(
+        chunks=reranked_chunks,
+        max_tokens=settings.MAX_CONTEXT_TOKENS
+    )
+
+    # Step 4: Groq LLM Inference
+    t0_llm = time.perf_counter()
+    llm_result = await llm_service.generate_financial_answer(
+        query=req.query,
+        context=compact_context,
+        model=req.model,
+        temperature=req.temperature,
+    )
+    llm_ms = (time.perf_counter() - t0_llm) * 1000
+    total_ms = (time.perf_counter() - start_total) * 1000
+
+    # Step 5: Format Source Citations
+    sources = []
+    for c in reranked_chunks:
+        raw_snippet = c.get("raw_content") or c.get("content", "")
+        snippet = raw_snippet.strip()[:250] + ("..." if len(raw_snippet) > 250 else "")
+        sources.append(
+            SourceCitation(
+                chunk_id=c.get("chunk_id", ""),
+                page_number=int(c.get("page_number", 1)),
+                filename=c.get("filename", ""),
+                section_header=c.get("section_header"),
+                section_breadcrumb=c.get("section_breadcrumb", []),
+                is_table=bool(c.get("is_table", False)),
+                rerank_score=float(c.get("rerank_score", 0.0)),
+                content_snippet=snippet,
+            )
+        )
+
+    return AnswerResponse(
+        query=req.query,
+        doc_id=req.doc_id,
+        answer=llm_result["answer"],
+        model_used=llm_result["model"],
+        context_tokens_estimated=estimated_tokens,
+        sources=sources,
+        latency_ms={
+            "retrieval_ms": round(retrieval_ms, 2),
+            "rerank_ms": round(rerank_ms, 2),
+            "llm_ms": round(llm_ms, 2),
+            "total_ms": round(total_ms, 2),
+        }
+    )
