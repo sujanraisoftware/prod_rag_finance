@@ -78,10 +78,16 @@ Running headers (`CONFIDENTIAL - 10-K`) and footers (`Page 42 of 120`) pollute d
 
 ## ⚡ Quickstart
 
-### 1. Run the FastAPI Server
+### 1. Run the FastAPI Server (Standalone Web UI + API)
 ```bash
 uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
+Open **`http://localhost:8000/`** in your browser to access the interactive **FinTech RAG Query Console**:
+- Ask financial questions across all documents or select a specific filing.
+- Toggle **Tables Only** filtering for balance sheets, income statements, and debt maturity schedules.
+- Upload new PDFs with one click directly from the UI.
+- View real-time Groq LLM answers with verified page citations and FlashRank rerank scores.
+- Zero external database daemons required (runs embedded via **Milvus Lite**).
 
 ### 2. (Optional) Run the Celery Worker for Distributed Queue
 ```bash

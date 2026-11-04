@@ -1,0 +1,503 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FinTech Fast RAG | Intelligence Console</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --primary: #0284c7;
+            --primary-hover: #0369a1;
+            --primary-light: #e0f2fe;
+            --surface: #ffffff;
+            --background: #f8fafc;
+            --border: #e2e8f0;
+            --text-main: #0f172a;
+            --text-muted: #64748b;
+            --success: #10b981;
+            --danger: #dc2626;
+            --warning: #f59e0b;
+            --card-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.07), 0 2px 4px -2px rgb(0 0 0 / 0.05);
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: 'Inter', system-ui, sans-serif;
+            background-color: var(--background);
+            color: var(--text-main);
+            line-height: 1.5;
+            padding: 30px 20px;
+        }
+
+        .layout { max-width: 1000px; margin: 0 auto; }
+
+        :focus-visible { outline: 3px solid rgba(2, 132, 199, 0.45); outline-offset: 2px; }
+
+        header {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 24px 28px;
+            margin-bottom: 24px;
+            box-shadow: var(--card-shadow);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 16px;
+        }
+
+        .header-title h1 { font-size: 22px; font-weight: 700; display: flex; align-items: center; gap: 10px; }
+        .header-title p { font-size: 13px; color: var(--text-muted); margin-top: 4px; }
+
+        .badge-cluster { display: flex; gap: 8px; flex-wrap: wrap; }
+
+        .badge {
+            font-size: 11px;
+            font-weight: 600;
+            padding: 4px 10px;
+            border-radius: 9999px;
+            border: 1px solid var(--border);
+            background: #f1f5f9;
+            color: var(--text-muted);
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 24px 28px;
+            margin-bottom: 24px;
+            box-shadow: var(--card-shadow);
+        }
+
+        .card-header { margin-bottom: 18px; }
+        .card-header h2 { font-size: 16px; font-weight: 600; }
+
+        .form-group { margin-bottom: 18px; }
+
+        label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px; color: #334155; }
+
+        select, textarea {
+            width: 100%;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 10px 14px;
+            font-size: 14px;
+            font-family: inherit;
+            color: var(--text-main);
+            background: #ffffff;
+            transition: border-color 0.15s ease;
+        }
+
+        select:focus, textarea:focus {
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(2, 132, 199, 0.15);
+        }
+
+        textarea { min-height: 110px; resize: vertical; line-height: 1.6; }
+
+        .field-meta { display: flex; justify-content: space-between; font-size: 11px; color: var(--text-muted); margin-top: 4px; }
+        .field-meta .over { color: var(--danger); font-weight: 600; }
+
+        .quick-queries { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; margin-bottom: 16px; }
+
+        .chip {
+            font-size: 12px;
+            background: #f8fafc;
+            border: 1px solid #cbd5e1;
+            padding: 4px 10px;
+            border-radius: 6px;
+            cursor: pointer;
+            color: #475569;
+            font-family: inherit;
+            transition: all 0.15s ease;
+        }
+        .chip:hover { background: var(--primary-light); border-color: var(--primary); color: var(--primary-hover); }
+
+        .options-row { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin-bottom: 20px; }
+
+        .checkbox-label { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 500; cursor: pointer; color: #334155; margin-bottom: 0; }
+
+        button.btn-primary {
+            background: var(--primary);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            font-size: 15px;
+            font-weight: 600;
+            font-family: inherit;
+            border-radius: 8px;
+            cursor: pointer;
+            width: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            transition: background-color 0.15s ease;
+        }
+        button.btn-primary:hover:not(:disabled) { background: var(--primary-hover); }
+        button.btn-primary:disabled { opacity: 0.7; cursor: wait; }
+
+        .spinner {
+            width: 16px; height: 16px;
+            border: 2px solid rgba(255,255,255,0.4);
+            border-top-color: #fff;
+            border-radius: 50%;
+            animation: spin 0.7s linear infinite;
+            display: none;
+        }
+        .loading .spinner { display: inline-block; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        @media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 2s; } }
+
+        /* Alerts */
+        .alert { border-radius: 8px; padding: 12px 16px; margin-bottom: 18px; font-size: 14px; border: 1px solid; }
+        .alert-error { background: #fef2f2; border-color: #fecaca; color: #991b1b; }
+        .alert-warn { background: #fffbeb; border-color: #fde68a; color: #92400e; }
+        .alert small { display: block; margin-top: 4px; opacity: 0.75; font-family: 'JetBrains Mono', monospace; font-size: 11px; }
+
+        .answer-box {
+            background: #ffffff;
+            border: 1px solid #bae6fd;
+            border-left: 5px solid var(--primary);
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 24px;
+        }
+
+        .answer-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 12px;
+            padding-bottom: 8px;
+            border-bottom: 1px solid #f1f5f9;
+        }
+
+        .answer-header h3 { font-size: 14px; font-weight: 700; color: var(--primary-hover); text-transform: uppercase; letter-spacing: 0.5px; }
+        .answer-actions { display: flex; align-items: center; gap: 8px; }
+
+        .answer-content { font-size: 15px; line-height: 1.7; color: #1e293b; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+        .source-card { background: #f8fafc; border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; margin-bottom: 12px; }
+
+        .source-header { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; font-size: 12px; font-weight: 600; color: #475569; }
+
+        .source-badge { background: #e2e8f0; padding: 2px 8px; border-radius: 4px; font-family: 'JetBrains Mono', monospace; }
+
+        .source-text {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12px;
+            background: #ffffff;
+            border: 1px solid #e2e8f0;
+            border-radius: 6px;
+            padding: 10px;
+            max-height: 140px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            color: #334155;
+        }
+
+        .metrics-bar { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 14px; font-size: 12px; color: var(--text-muted); }
+        .metric-pill { background: #f1f5f9; border: 1px solid #e2e8f0; padding: 4px 10px; border-radius: 6px; font-family: 'JetBrains Mono', monospace; }
+
+        .upload-section { display: none; margin-bottom: 18px; padding: 16px; border: 2px dashed #cbd5e1; border-radius: 8px; background: #f8fafc; text-align: center; }
+        .upload-section.active { display: block; }
+        .upload-btn-row { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 10px; margin-top: 8px; }
+
+        .btn-secondary {
+            background: #f1f5f9;
+            border: 1px solid #cbd5e1;
+            color: #334155;
+            padding: 6px 14px;
+            border-radius: 6px;
+            font-size: 13px;
+            font-family: inherit;
+            cursor: pointer;
+            font-weight: 500;
+        }
+        .btn-secondary:hover:not(:disabled) { background: #e2e8f0; }
+        .btn-secondary:disabled { opacity: 0.6; cursor: not-allowed; }
+        .btn-sm { font-size: 11px; padding: 3px 8px; }
+
+        .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+    </style>
+</head>
+<body>
+
+<div class="layout">
+    <header>
+        <div class="header-title">
+            <h1><span aria-hidden="true">📊</span> FinTech Fast RAG</h1>
+            <p>Financial Intelligence Console (PyMuPDF4LLM + Milvus + FlashRank + Groq)</p>
+        </div>
+        <div class="badge-cluster">
+            <span class="badge">Milvus</span>
+            <span class="badge">FastEmbed (ONNX)</span>
+            <span class="badge">FlashRank</span>
+        </div>
+    </header>
+
+    <div class="card">
+        <form method="POST" action="/" id="ragForm">
+            <div class="form-group">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                    <label for="docSelect" style="margin-bottom: 0;">Target Document:</label>
+                    <button type="button" class="btn-secondary btn-sm" id="toggleUploadBtn" aria-expanded="false" aria-controls="uploadPanel">+ Upload New PDF</button>
+                </div>
+                <select name="doc_id" id="docSelect">
+                    <option value="">-- All Ingested Documents (Cross-Document Search) --</option>
+                    {% for doc in documents %}
+                    <option value="{{ doc.doc_id }}" {% if selected_doc_id == doc.doc_id %}selected{% endif %}>
+                        {{ doc.filename }} ({{ doc.page_count }} pages, {{ doc.total_chunks }} chunks)
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div class="upload-section" id="uploadPanel" data-max-mb="{{ max_upload_mb|default(50) }}">
+                <p style="font-size: 13px; color: #475569;">Upload an SEC 10-K, 10-Q, or financial report (PDF, up to {{ max_upload_mb|default(50) }} MB):</p>
+                <div class="upload-btn-row">
+                    <label for="pdfFileInput" class="sr-only">PDF file</label>
+                    <input type="file" id="pdfFileInput" accept="application/pdf,.pdf" style="font-size: 12px;">
+                    <button type="button" class="btn-secondary" id="uploadSubmitBtn">Upload &amp; Parse</button>
+                </div>
+                <div id="uploadStatusMsg" role="status" aria-live="polite" style="font-size: 12px; margin-top: 8px; font-weight: 500;"></div>
+            </div>
+
+            <div class="form-group">
+                <label for="promptInput">Financial Question / Analytical Prompt:</label>
+                <textarea name="prompt" id="promptInput" required maxlength="{{ max_prompt_chars|default(2000) }}" placeholder="Ask specific questions about revenue, EBITDA, debt tranches, notes, or research conclusions...">{{ user_prompt if user_prompt else '' }}</textarea>
+                <div class="field-meta">
+                    <span>Tip: press Ctrl/⌘ + Enter to submit</span>
+                    <span id="charCount">0 / {{ max_prompt_chars|default(2000) }}</span>
+                </div>
+
+                <div class="quick-queries">
+                    <button type="button" class="chip" data-query="What are the discussion and conclusions in this research paper?">💡 Discussion &amp; Conclusions</button>
+                    <button type="button" class="chip" data-query="What were the total net sales and service revenues in FY 2025 and 2024?">💡 Net Sales &amp; Revenues</button>
+                    <button type="button" class="chip" data-query="What are the scheduled principal debt maturities over the next 5 years?">💡 Debt Obligations</button>
+                </div>
+            </div>
+
+            <div class="options-row">
+                <label class="checkbox-label">
+                    <input type="checkbox" name="is_table_only" value="true" {% if is_table_only %}checked{% endif %}>
+                    <span>Filter Tables Only (Balance sheets, income statements, schedules)</span>
+                </label>
+            </div>
+
+            <button type="submit" class="btn-primary" id="submitBtn">
+                <span class="spinner" aria-hidden="true"></span>
+                <span id="submitLabel">Ask Financial Analyst</span>
+            </button>
+        </form>
+    </div>
+
+    <div id="resultsRegion" aria-live="polite">
+    {% if error %}
+    <div class="card">
+        <div class="alert alert-error" role="alert">
+            {{ error }}
+            {% if request_id %}<small>Reference: {{ request_id }}</small>{% endif %}
+        </div>
+    </div>
+    {% endif %}
+
+    {% if result %}
+    <div class="card">
+        <div class="answer-box">
+            <div class="answer-header">
+                <h3>Financial Analyst Response</h3>
+                <div class="answer-actions">
+                    {% if model_used %}<span class="badge" style="background: #f0f9ff; color: var(--primary);">{{ model_used }}</span>{% endif %}
+                    <button type="button" class="btn-secondary btn-sm" id="copyAnswerBtn">Copy</button>
+                </div>
+            </div>
+            {% if truncated %}
+            <div class="alert alert-warn" role="status">This answer was cut off because it reached the length limit. Try a narrower question for a complete answer.</div>
+            {% endif %}
+            <div class="answer-content" id="answerContent">{{ result }}</div>
+
+            {% if timing %}
+            <div class="metrics-bar">
+                <span class="metric-pill">Retrieval: {{ timing.retrieval_ms }}ms</span>
+                <span class="metric-pill">Rerank: {{ timing.rerank_ms }}ms</span>
+                <span class="metric-pill">LLM: {{ timing.llm_ms }}ms</span>
+                <span class="metric-pill">Total: {{ timing.total_ms }}ms</span>
+                {% if context_tokens %}<span class="metric-pill">Context: {{ context_tokens }} tokens</span>{% endif %}
+            </div>
+            {% endif %}
+        </div>
+
+        {% if sources and sources|length > 0 %}
+        <div class="card-header">
+            <h2>Grounded Evidence &amp; Provenance Sources ({{ sources|length }})</h2>
+        </div>
+        {% for s in sources %}
+        <div class="source-card">
+            <div class="source-header">
+                <div>
+                    <span class="source-badge">Page {{ s.page_number }}</span>
+                    <strong style="margin-left: 8px;">{{ s.filename }}</strong>
+                    {% if s.section_header %} &bull; <span>{{ s.section_header }}</span>{% endif %}
+                </div>
+                <div>
+                    {% if s.is_table %}<span class="badge" style="background: #fef3c7; color: #92400e;">Table</span>{% endif %}
+                    {% if s.rerank_score %}<span class="badge">Score: {{ (s.rerank_score * 100)|round(1) }}%</span>{% endif %}
+                </div>
+            </div>
+            <div class="source-text">{{ s.content_snippet }}</div>
+        </div>
+        {% endfor %}
+        {% endif %}
+    </div>
+    {% endif %}
+    </div>
+
+</div>
+
+<script>
+    const form = document.getElementById('ragForm');
+    const promptInput = document.getElementById('promptInput');
+    const submitBtn = document.getElementById('submitBtn');
+    const submitLabel = document.getElementById('submitLabel');
+    const charCount = document.getElementById('charCount');
+    const maxChars = parseInt(promptInput.getAttribute('maxlength'), 10) || 2000;
+
+    // Quick-query chips
+    document.querySelectorAll('.chip').forEach((chip) => {
+        chip.addEventListener('click', () => {
+            promptInput.value = chip.dataset.query;
+            updateCount();
+            promptInput.focus();
+        });
+    });
+
+    // Character counter
+    function updateCount() {
+        const n = promptInput.value.length;
+        charCount.textContent = `${n} / ${maxChars}`;
+        charCount.classList.toggle('over', n > maxChars);
+    }
+    promptInput.addEventListener('input', updateCount);
+    updateCount();
+
+    // Ctrl/Cmd + Enter submits
+    promptInput.addEventListener('keydown', (e) => {
+        if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+            e.preventDefault();
+            form.requestSubmit();
+        }
+    });
+
+    // Prevent double submits and show progress
+    function setLoading(on) {
+        submitBtn.disabled = on;
+        submitBtn.classList.toggle('loading', on);
+        submitLabel.textContent = on ? 'Analyzing document…' : 'Ask Financial Analyst';
+    }
+    form.addEventListener('submit', (e) => {
+        if (!promptInput.value.trim()) {
+            e.preventDefault();
+            promptInput.focus();
+            return;
+        }
+        setLoading(true);
+    });
+    // Restore the button if the page is restored from the back/forward cache
+    window.addEventListener('pageshow', (e) => { if (e.persisted) setLoading(false); });
+
+    // Copy answer
+    const copyBtn = document.getElementById('copyAnswerBtn');
+    if (copyBtn) {
+        copyBtn.addEventListener('click', async () => {
+            try {
+                await navigator.clipboard.writeText(document.getElementById('answerContent').innerText);
+                copyBtn.textContent = 'Copied';
+            } catch (_) {
+                copyBtn.textContent = 'Copy failed';
+            }
+            setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1800);
+        });
+    }
+
+    // Upload panel
+    const toggleUploadBtn = document.getElementById('toggleUploadBtn');
+    const uploadPanel = document.getElementById('uploadPanel');
+    toggleUploadBtn.addEventListener('click', () => {
+        const open = uploadPanel.classList.toggle('active');
+        toggleUploadBtn.setAttribute('aria-expanded', String(open));
+    });
+
+    const uploadSubmitBtn = document.getElementById('uploadSubmitBtn');
+    const pdfFileInput = document.getElementById('pdfFileInput');
+    const uploadStatusMsg = document.getElementById('uploadStatusMsg');
+    const docSelect = document.getElementById('docSelect');
+    const maxUploadBytes = (parseInt(uploadPanel.dataset.maxMb, 10) || 50) * 1024 * 1024;
+
+    function uploadStatus(text, color) {
+        uploadStatusMsg.style.color = color;
+        uploadStatusMsg.textContent = text;
+    }
+
+    uploadSubmitBtn.addEventListener('click', async () => {
+        const file = pdfFileInput.files[0];
+        if (!file) return uploadStatus('Please select a PDF file first.', '#dc2626');
+
+        const looksLikePdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+        if (!looksLikePdf) return uploadStatus('Only PDF files are supported.', '#dc2626');
+        if (file.size > maxUploadBytes) {
+            return uploadStatus(`File is too large (max ${maxUploadBytes / 1024 / 1024} MB).`, '#dc2626');
+        }
+
+        const formData = new FormData();
+        formData.append('file', file);
+
+        uploadSubmitBtn.disabled = true;
+        uploadStatus('Uploading and parsing PDF… large filings can take a moment.', '#0284c7');
+
+        try {
+            const resp = await fetch('/api/v1/documents/upload', { method: 'POST', body: formData });
+
+            if (!resp.ok) {
+                let msg = `Upload failed (HTTP ${resp.status})`;
+                try { msg = (await resp.json()).message || msg; } catch (_) {}
+                throw new Error(msg);
+            }
+
+            const data = await resp.json();
+            uploadStatus(`Ingested "${data.filename}" (${data.page_count} pages). It will be indexed on your first query.`, '#059669');
+
+            const opt = document.createElement('option');
+            opt.value = data.doc_id;
+            opt.textContent = `${data.filename} (${data.page_count} pages)`;
+            docSelect.add(opt);
+            docSelect.value = data.doc_id;
+            pdfFileInput.value = '';
+
+            setTimeout(() => {
+                uploadPanel.classList.remove('active');
+                toggleUploadBtn.setAttribute('aria-expanded', 'false');
+                uploadStatus('', '');
+            }, 2500);
+        } catch (e) {
+            uploadStatus('Error: ' + e.message, '#dc2626');
+        } finally {
+            uploadSubmitBtn.disabled = false;
+        }
+    });
+</script>
+
+</body>
+</html>

@@ -47,8 +47,14 @@ class Settings(BaseSettings):
     PRESERVE_TABLES_ATOMICALLY: bool = True
     INJECT_GROUNDING_HEADER: bool = True
 
-    # Milvus Vector Database Configuration
-    # Supports Milvus Lite (local file: ./storage/milvus_finance.db) or remote Milvus cluster (http://localhost:19530)
+    # Vector Database Configuration
+    # Options: "milvus" (default standalone via Milvus Lite) or "chromadb"
+    VECTOR_STORE_BACKEND: str = "milvus"
+    CHROMA_PATH: str = "./storage/chroma_db"
+    CHROMA_COLLECTION_NAME: str = "financial_rag_chunks"
+
+    # Milvus Vector Database Configuration (Standalone embedded via Milvus Lite)
+    # Stored locally at ./storage/milvus_finance.db with zero external daemons needed
     MILVUS_URI: str = "./storage/milvus_finance.db"
     MILVUS_TOKEN: str = ""
     MILVUS_COLLECTION_NAME: str = "financial_rag_chunks"

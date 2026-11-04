@@ -339,4 +339,6 @@ class MilvusVectorStore:
                 self._client = None
 
 
+
+# Backward compatibility alias
 milvus_store = MilvusVectorStore()
